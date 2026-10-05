@@ -1,0 +1,458 @@
+package com.pacebeat.app;
+
+import android.Manifest;
+import android.app.Activity;
+import android.content.pm.PackageManager;
+import android.content.Intent;
+import android.content.res.ColorStateList;
+import android.content.res.Configuration;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.RectF;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+import android.provider.Settings;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.SeekBar;
+import android.widget.Switch;
+import android.widget.TextView;
+
+import java.util.Locale;
+
+public class MainActivity extends Activity {
+    private static final int BG = Color.rgb(16, 20, 18);
+    private static final int SURFACE = Color.rgb(26, 32, 28);
+    private static final int BORDER = Color.rgb(48, 59, 51);
+    private static final int TEXT = Color.rgb(243, 246, 241);
+    private static final int MUTED = Color.rgb(166, 180, 169);
+    private static final int LIME = Color.rgb(217, 244, 91);
+    private static final int TEAL = Color.rgb(115, 190, 169);
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private int spm;
+    private boolean sound;
+    private boolean vibrate;
+    private TextView spmText;
+    private TextView statusText;
+    private TextView timerText;
+    private TextView actionText;
+    private TextView[] presets;
+    private SeekBar seekBar;
+    private RhythmView rhythmView;
+    private boolean displayedRunning;
+
+    private final Runnable updateClock = new Runnable() {
+        @Override public void run() {
+            boolean running = BeatService.isRunning;
+            if (running != displayedRunning) {
+                displayedRunning = running;
+                statusText.setText(running ? "节拍进行中" : "准备开始");
+                statusText.setTextColor(running ? LIME : MUTED);
+                actionText.setText(running ? "停止节拍" : "开始跑步");
+                actionText.setContentDescription(running ? "停止跑步节拍" : "开始跑步节拍");
+            }
+            long elapsedMs = running ? SystemClock.elapsedRealtime() - BeatService.startedAt
+                    : BeatService.lastSessionMs;
+            long seconds = elapsedMs / 1000;
+            timerText.setText(String.format(Locale.getDefault(), "%02d:%02d:%02d",
+                    seconds / 3600, seconds / 60 % 60, seconds % 60));
+            rhythmView.invalidate();
+            handler.postDelayed(this, running ? 40 : 350);
+        }
+    };
+
+    @Override protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        spm = Cadence.clamp(getPreferences(MODE_PRIVATE).getInt("spm", Cadence.DEFAULT));
+        sound = getPreferences(MODE_PRIVATE).getBoolean("sound", true);
+        vibrate = getPreferences(MODE_PRIVATE).getBoolean("vibrate", false);
+        getWindow().setStatusBarColor(BG);
+        getWindow().setNavigationBarColor(BG);
+        buildScreen();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        handler.removeCallbacks(updateClock);
+        handler.post(updateClock);
+    }
+
+    @Override protected void onPause() {
+        handler.removeCallbacks(updateClock);
+        super.onPause();
+    }
+
+    private void buildScreen() {
+        boolean landscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(BG);
+        setContentView(root);
+        if (Build.VERSION.SDK_INT >= 35) {
+            root.setOnApplyWindowInsetsListener((view, insets) -> {
+                android.graphics.Insets bars = insets.getInsets(
+                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                return insets;
+            });
+        }
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setPadding(dp(24), dp(landscape ? 8 : 16), dp(24), dp(landscape ? 94 : 118));
+        root.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+
+        LinearLayout content = column();
+        scroll.addView(content);
+
+        LinearLayout header = row(Gravity.CENTER_VERTICAL);
+        header.setMinimumHeight(dp(landscape ? 48 : 58));
+        content.addView(header, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout brand = column();
+        header.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView name = text("PACEBEAT", landscape ? 20 : 27, TEXT, true);
+        name.setLetterSpacing(0);
+        name.setAutoSizeTextTypeUniformWithConfiguration(14, 27, 1, 2);
+        brand.addView(name);
+        TextView tagline = text("为每一步定下节奏", 12, MUTED, false);
+        brand.addView(tagline);
+        statusText = text("准备开始", 12, MUTED, true);
+        statusText.setGravity(Gravity.CENTER);
+        statusText.setBackground(shape(SURFACE, 8, BORDER));
+        header.addView(statusText, new LinearLayout.LayoutParams(dp(100), dp(38)));
+
+        TextView overline = text("01   当前步频  /  CADENCE", 12, TEAL, true);
+        if (landscape) overline.setVisibility(View.GONE);
+        LinearLayout.LayoutParams overlineLp = new LinearLayout.LayoutParams(-1, -2);
+        overlineLp.topMargin = dp(landscape ? 12 : 30);
+        content.addView(overline, overlineLp);
+
+        FrameLayout dial = new FrameLayout(this);
+        int dialHeight = landscape ? 126 : 320;
+        LinearLayout.LayoutParams dialLp = new LinearLayout.LayoutParams(-1, dp(dialHeight));
+        dialLp.topMargin = dp(landscape ? 0 : 8);
+        content.addView(dial, dialLp);
+        rhythmView = new RhythmView();
+        dial.addView(rhythmView, new FrameLayout.LayoutParams(-1, -1));
+
+        LinearLayout dialContent = column();
+        dialContent.setGravity(Gravity.CENTER);
+        FrameLayout.LayoutParams dialContentLp = new FrameLayout.LayoutParams(-1, dp(landscape ? 112 : 180), Gravity.CENTER);
+        dialContentLp.bottomMargin = dp(landscape ? 0 : 14);
+        dial.addView(dialContent, dialContentLp);
+        TextView dialLabel = text("目标步频", 14, MUTED, false);
+        if (landscape) dialLabel.setVisibility(View.GONE);
+        dialLabel.setGravity(Gravity.CENTER);
+        dialContent.addView(dialLabel);
+        spmText = text(String.valueOf(spm), landscape ? 64 : 106, TEXT, true);
+        spmText.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+        spmText.setIncludeFontPadding(false);
+        spmText.setGravity(Gravity.CENTER);
+        spmText.setAutoSizeTextTypeUniformWithConfiguration(32, landscape ? 64 : 106, 2, 2);
+        dialContent.addView(spmText, new LinearLayout.LayoutParams(-1, dp(landscape ? 66 : 118)));
+        TextView unit = text("SPM  /  步每分钟", 12, LIME, true);
+        if (landscape) unit.setText("SPM");
+        unit.setGravity(Gravity.CENTER);
+        dialContent.addView(unit);
+
+        LinearLayout fineTune = row(Gravity.CENTER_VERTICAL);
+        content.addView(fineTune, new LinearLayout.LayoutParams(-1, dp(64)));
+        TextView minus = stepper("−", "减少 1 步每分钟", -1);
+        fineTune.addView(minus, new LinearLayout.LayoutParams(dp(56), dp(56)));
+        seekBar = new SeekBar(this);
+        seekBar.setMax(Cadence.MAX - Cadence.MIN);
+        seekBar.setProgress(spm - Cadence.MIN);
+        seekBar.setProgressTintList(ColorStateList.valueOf(LIME));
+        seekBar.setThumbTintList(ColorStateList.valueOf(LIME));
+        seekBar.setProgressBackgroundTintList(ColorStateList.valueOf(BORDER));
+        seekBar.setContentDescription("目标步频，" + spm + " 步每分钟");
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                if (fromUser) setSpm(Cadence.MIN + progress);
+            }
+            @Override public void onStartTrackingTouch(SeekBar bar) {}
+            @Override public void onStopTrackingTouch(SeekBar bar) {}
+        });
+        LinearLayout.LayoutParams seekLp = new LinearLayout.LayoutParams(0, dp(56), 1);
+        seekLp.setMargins(dp(10), 0, dp(10), 0);
+        fineTune.addView(seekBar, seekLp);
+        TextView plus = stepper("+", "增加 1 步每分钟", 1);
+        fineTune.addView(plus, new LinearLayout.LayoutParams(dp(56), dp(56)));
+
+        TextView presetTitle = text("快速设定", 14, MUTED, true);
+        LinearLayout.LayoutParams presetTitleLp = new LinearLayout.LayoutParams(-1, -2);
+        presetTitleLp.topMargin = dp(24);
+        content.addView(presetTitle, presetTitleLp);
+        LinearLayout presetRow = row(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams presetLp = new LinearLayout.LayoutParams(-1, dp(52));
+        presetLp.topMargin = dp(12);
+        content.addView(presetRow, presetLp);
+        int[] values = {160, 170, 180, 190};
+        presets = new TextView[values.length];
+        for (int i = 0; i < values.length; i++) {
+            final int value = values[i];
+            TextView preset = button(String.valueOf(value), 17, TEXT, true);
+            preset.setGravity(Gravity.CENTER);
+            preset.setContentDescription(value + " 步每分钟");
+            preset.setOnClickListener(v -> setSpm(value));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(50), 1);
+            if (i > 0) lp.leftMargin = dp(8);
+            presetRow.addView(preset, lp);
+            presets[i] = preset;
+        }
+        refreshPresets();
+
+        TextView settingsTitle = text("02   反馈方式  /  FEEDBACK", 12, TEAL, true);
+        LinearLayout.LayoutParams settingsLp = new LinearLayout.LayoutParams(-1, -2);
+        settingsLp.topMargin = dp(34);
+        content.addView(settingsTitle, settingsLp);
+        content.addView(settingRow("节拍声音", "每一步的短促提示音", sound, checked -> {
+            sound = checked;
+            saveAndUpdate();
+        }), withTop(18));
+        content.addView(divider(), new LinearLayout.LayoutParams(-1, dp(1)));
+        content.addView(settingRow("震动反馈", "适合不方便听声音时", vibrate, checked -> {
+            vibrate = checked;
+            saveAndUpdate();
+        }), new LinearLayout.LayoutParams(-1, dp(74)));
+
+        LinearLayout session = row(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams sessionLp = new LinearLayout.LayoutParams(-1, -2);
+        sessionLp.topMargin = dp(16);
+        content.addView(session, sessionLp);
+        session.setMinimumHeight(dp(78));
+        LinearLayout sessionLabels = column();
+        session.addView(sessionLabels, new LinearLayout.LayoutParams(0, -2, 1));
+        sessionLabels.addView(text("本次训练", 15, TEXT, true));
+        timerText = text("00:00:00", 22, TEXT, true);
+        timerText.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        session.addView(timerText);
+
+        LinearLayout dock = column();
+        dock.setPadding(dp(24), dp(landscape ? 8 : 12), dp(24), dp(landscape ? 8 : 20));
+        dock.setBackgroundColor(BG);
+        FrameLayout.LayoutParams dockLp = new FrameLayout.LayoutParams(-1, dp(landscape ? 72 : 100), Gravity.BOTTOM);
+        root.addView(dock, dockLp);
+        actionText = button("开始跑步", 19, BG, true);
+        actionText.setGravity(Gravity.CENTER);
+        actionText.setBackground(ripple(LIME, 8, LIME));
+        actionText.setContentDescription("开始跑步节拍");
+        actionText.setOnClickListener(v -> toggleRunning());
+        dock.addView(actionText, new LinearLayout.LayoutParams(-1, dp(landscape ? 56 : 64)));
+    }
+
+    private void toggleRunning() {
+        if (BeatService.isRunning) {
+            startService(new Intent(this, BeatService.class).setAction(BeatService.ACTION_STOP));
+        } else {
+            if (Build.VERSION.SDK_INT >= 33 &&
+                    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[] {Manifest.permission.POST_NOTIFICATIONS}, 1);
+            }
+            Intent intent = settingsIntent(BeatService.ACTION_START);
+            startForegroundService(intent);
+        }
+        handler.removeCallbacks(updateClock);
+        handler.postDelayed(updateClock, 120);
+    }
+
+    private void setSpm(int value) {
+        spm = Cadence.clamp(value);
+        spmText.setText(String.valueOf(spm));
+        seekBar.setProgress(spm - Cadence.MIN);
+        seekBar.setContentDescription("目标步频，" + spm + " 步每分钟");
+        refreshPresets();
+        saveAndUpdate();
+    }
+
+    private void refreshPresets() {
+        int[] values = {160, 170, 180, 190};
+        for (int i = 0; i < presets.length; i++) {
+            boolean selected = values[i] == spm;
+            presets[i].setTextColor(selected ? BG : TEXT);
+            presets[i].setBackground(ripple(selected ? LIME : SURFACE, 6,
+                    selected ? LIME : BORDER));
+            presets[i].setSelected(selected);
+        }
+    }
+
+    private Intent settingsIntent(String action) {
+        return new Intent(this, BeatService.class).setAction(action)
+                .putExtra(BeatService.EXTRA_SPM, spm)
+                .putExtra(BeatService.EXTRA_SOUND, sound)
+                .putExtra(BeatService.EXTRA_VIBRATE, vibrate);
+    }
+
+    private void saveAndUpdate() {
+        getPreferences(MODE_PRIVATE).edit()
+                .putInt("spm", spm).putBoolean("sound", sound)
+                .putBoolean("vibrate", vibrate).apply();
+        if (BeatService.isRunning) startService(settingsIntent(BeatService.ACTION_UPDATE));
+    }
+
+    private TextView stepper(String symbol, String description, int delta) {
+        TextView button = button(symbol, 28, TEXT, false);
+        button.setGravity(Gravity.CENTER);
+        button.setBackground(ripple(SURFACE, 6, BORDER));
+        button.setContentDescription(description);
+        button.setOnClickListener(v -> setSpm(spm + delta));
+        return button;
+    }
+
+    private interface CheckedCallback { void onChecked(boolean checked); }
+
+    private LinearLayout settingRow(String title, String hint, boolean checked, CheckedCallback callback) {
+        LinearLayout row = row(Gravity.CENTER_VERTICAL);
+        LinearLayout labels = column();
+        row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+        labels.addView(text(title, 16, TEXT, true));
+        labels.addView(text(hint, 12, MUTED, false));
+        Switch toggle = new Switch(this);
+        toggle.setChecked(checked);
+        toggle.setContentDescription(title);
+        toggle.setThumbTintList(new ColorStateList(
+                new int[][] {new int[] {android.R.attr.state_checked}, new int[] {}},
+                new int[] {LIME, MUTED}));
+        toggle.setTrackTintList(new ColorStateList(
+                new int[][] {new int[] {android.R.attr.state_checked}, new int[] {}},
+                new int[] {BORDER, SURFACE}));
+        toggle.setOnCheckedChangeListener((button, value) -> callback.onChecked(value));
+        row.addView(toggle, new LinearLayout.LayoutParams(dp(56), dp(56)));
+        return row;
+    }
+
+    private View divider() {
+        View view = new View(this);
+        view.setBackgroundColor(BORDER);
+        return view;
+    }
+
+    private LinearLayout.LayoutParams withTop(int margin) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(margin);
+        return lp;
+    }
+
+    private LinearLayout column() {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        return layout;
+    }
+
+    private LinearLayout row(int gravity) {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.HORIZONTAL);
+        layout.setGravity(gravity);
+        return layout;
+    }
+
+    private TextView text(String content, int size, int color, boolean bold) {
+        TextView view = new TextView(this);
+        view.setText(content);
+        view.setTextSize(size);
+        view.setTextColor(color);
+        view.setTypeface(Typeface.create("sans-serif", bold ? Typeface.BOLD : Typeface.NORMAL));
+        view.setIncludeFontPadding(false);
+        return view;
+    }
+
+    private Button button(String content, int size, int color, boolean bold) {
+        Button view = new Button(this);
+        view.setText(content);
+        view.setTextSize(size);
+        view.setTextColor(color);
+        view.setAllCaps(false);
+        view.setTypeface(Typeface.create("sans-serif", bold ? Typeface.BOLD : Typeface.NORMAL));
+        view.setIncludeFontPadding(false);
+        view.setMinimumWidth(0);
+        view.setMinimumHeight(0);
+        view.setPadding(0, 0, 0, 0);
+        return view;
+    }
+
+    private RippleDrawable ripple(int color, int radius, int border) {
+        return new RippleDrawable(ColorStateList.valueOf(Color.argb(65, 255, 255, 255)),
+                shape(color, radius, border), null);
+    }
+
+    private GradientDrawable shape(int color, int radius, int border) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(dp(radius));
+        if (border != color) drawable.setStroke(dp(1), border);
+        return drawable;
+    }
+
+    private int dp(float value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private final class RhythmView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        RhythmView() { super(MainActivity.this); }
+
+        @Override protected void onDraw(Canvas canvas) {
+            float cx = getWidth() / 2f;
+            float cy = getHeight() / 2f - dp(3);
+            float radius = Math.min(Math.min(getWidth() * .39f, getHeight() * .38f), dp(144));
+            boolean running = BeatService.isRunning;
+            boolean motion = Settings.Global.getFloat(getContentResolver(),
+                    Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f;
+            float age = running ? SystemClock.elapsedRealtime() - BeatService.lastBeatAt : 999;
+            float pulse = motion && running ? Math.max(0, 1 - age / 300f) : 0;
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(1));
+            paint.setColor(BORDER);
+            canvas.drawCircle(cx, cy, radius, paint);
+
+            paint.setStrokeWidth(dp(4));
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setColor(LIME);
+            RectF bounds = new RectF(cx - radius, cy - radius, cx + radius, cy + radius);
+            canvas.drawArc(bounds, -90, running && motion ? 260 + 35 * pulse : 300, false, paint);
+
+            paint.setStrokeWidth(dp(1.5f));
+            for (int i = 0; i < 48; i++) {
+                double angle = Math.PI * 2 * i / 48 - Math.PI / 2;
+                float start = radius + dp(13);
+                float end = start + dp(i % 4 == 0 ? 9 : 5);
+                paint.setColor(i % 4 == 0 ? TEAL : BORDER);
+                canvas.drawLine(cx + (float) Math.cos(angle) * start,
+                        cy + (float) Math.sin(angle) * start,
+                        cx + (float) Math.cos(angle) * end,
+                        cy + (float) Math.sin(angle) * end, paint);
+            }
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(running ? LIME : TEAL);
+            canvas.drawCircle(cx, cy - radius, dp(4 + pulse * 3), paint);
+            if (pulse > 0) {
+                paint.setColor(Color.argb((int) (50 * pulse), 217, 244, 91));
+                canvas.drawCircle(cx, cy, radius * (.68f + .08f * (1 - pulse)), paint);
+            }
+            for (int i = 0; i < 9; i++) {
+                float height = dp((i % 2 == 0 ? 5 : 9) + (running && motion ? pulse * (i % 3 + 2) * 5 : 0));
+                paint.setColor(i == 4 ? LIME : TEAL);
+                canvas.drawRoundRect(cx + dp((i - 4) * 10 - 2), cy + radius * .9f - height / 2,
+                        cx + dp((i - 4) * 10 + 2), cy + radius * .9f + height / 2,
+                        dp(2), dp(2), paint);
+            }
+        }
+    }
+}

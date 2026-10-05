@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.PaceBeat" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#D9F45B</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#101412</item>
+        <item name="android:navigationBarColor">#101412</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>
