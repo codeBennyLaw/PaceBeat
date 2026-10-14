@@ -194,6 +194,11 @@ public class BeatService extends Service {
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(channel);
     }
 
+    private static boolean supportsLiveUpdates() {
+        return Build.VERSION.SDK_INT >= 36
+                && Build.VERSION.SDK_INT_FULL >= Build.VERSION_CODES_FULL.BAKLAVA_1;
+    }
+
     public static long elapsedMs() {
         return activeMs + (isRunning ? Math.max(0, SystemClock.elapsedRealtime() - startedAt) : 0);
     }
@@ -294,14 +299,21 @@ public class BeatService extends Service {
                 .setContentTitle("PaceBeat · " + spm + " SPM")
                 .setContentText(data)
                 .setContentIntent(open)
-                .setOngoing(active)
+                .setOngoing(isActive)
                 .setOnlyAlertOnce(true)
-                .setCategory(Notification.CATEGORY_SERVICE)
+                .setCategory(Build.VERSION.SDK_INT >= 31
+                        ? Notification.CATEGORY_WORKOUT : Notification.CATEGORY_SERVICE)
                 .addAction(new Notification.Action.Builder(null, isRunning ? "暂停" : "继续", pause).build())
                 .addAction(new Notification.Action.Builder(null, "结束", stop).build())
                 .setDeleteIntent(dismiss);
         if (isRunning) {
             builder.setWhen(System.currentTimeMillis() - elapsedMs()).setUsesChronometer(true);
+        }
+        if (supportsLiveUpdates() && !notificationDismissed) {
+            builder.setRequestPromotedOngoing(true)
+                    .setShortCriticalText(isRunning ? spm + " SPM" : "已暂停")
+                    .setWhen(System.currentTimeMillis() - elapsedMs())
+                    .setUsesChronometer(isRunning);
         }
         return builder.build();
     }
