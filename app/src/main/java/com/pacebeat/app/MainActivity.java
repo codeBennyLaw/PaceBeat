@@ -141,7 +141,9 @@ public class MainActivity extends Activity {
     private void handleShortcutAction() {
         String action = pendingShortcutAction;
         pendingShortcutAction = null;
-        if (BeatService.ACTION_START.equals(action)) {
+        if (LauncherShortcuts.ACTION_TOGGLE.equals(action)) {
+            toggleRunning();
+        } else if (BeatService.ACTION_START.equals(action)) {
             requestStartSession();
         } else if (BeatService.isActive && (BeatService.ACTION_PAUSE.equals(action)
                 || BeatService.ACTION_RESUME.equals(action) || BeatService.ACTION_STOP.equals(action))) {
