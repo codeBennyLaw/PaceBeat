@@ -12,12 +12,14 @@
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
 
     <application
+        android:name=".PaceBeatApplication"
         android:allowBackup="false"
         android:label="PaceBeat"
         android:theme="@style/Theme.PaceBeat"
         android:icon="@drawable/ic_launcher">
         <activity
             android:name=".MainActivity"
+            android:launchMode="singleTop"
             android:screenOrientation="portrait"
             android:exported="true">
             <intent-filter>
