@@ -31,6 +31,7 @@ public class LauncherShortcutsTest {
     private final Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
     private final ShortcutManager shortcuts = context.getSystemService(ShortcutManager.class);
     private ActivityScenario<MainActivity> screen;
+    private Intent cachedShortcut;
 
     @Before public void setUp() throws Exception {
         grant(Manifest.permission.ACCESS_COARSE_LOCATION);
@@ -43,20 +44,21 @@ public class LauncherShortcutsTest {
                 .putInt("spm", 180).putBoolean("sound", false).putBoolean("vibrate", false)
                 .putInt("rhythm_mode", Cadence.MODE_ALTERNATING).commit();
         screen = ActivityScenario.launch(new Intent(context, MainActivity.class));
-        assertShortcuts(BeatService.ACTION_START);
+        assertShortcut(R.string.shortcut_start);
+        cachedShortcut = shortcuts.getDynamicShortcuts().get(0).getIntent();
     }
 
     @After public void tearDown() {
         context.stopService(new Intent(context, BeatService.class));
         await(() -> !BeatService.isActive);
-        assertShortcuts(BeatService.ACTION_START);
+        assertShortcut(R.string.shortcut_start);
         if (screen != null) screen.close();
     }
 
     @Test public void shortcutsFollowRunAndNotificationActions() {
-        openShortcut(BeatService.ACTION_START);
+        openCachedShortcut();
         await(() -> BeatService.isRunning);
-        assertShortcuts(BeatService.ACTION_PAUSE, BeatService.ACTION_STOP);
+        assertShortcut(R.string.shortcut_pause);
         Notification notification = context.getSystemService(NotificationManager.class)
                 .getActiveNotifications()[0].getNotification();
         assertEquals("PaceBeat · 180 SPM", notification.extras.getString(Notification.EXTRA_TITLE));
@@ -69,15 +71,33 @@ public class LauncherShortcutsTest {
             throw new AssertionError(e);
         }
         await(() -> BeatService.isActive && !BeatService.isRunning);
-        assertShortcuts(BeatService.ACTION_RESUME, BeatService.ACTION_STOP);
+        assertShortcut(R.string.shortcut_resume);
         long elapsed = BeatService.elapsedMs();
-        openShortcut(BeatService.ACTION_RESUME);
+        openCachedShortcut();
         await(() -> BeatService.isRunning);
         assertTrue(BeatService.elapsedMs() >= elapsed);
-        assertShortcuts(BeatService.ACTION_PAUSE, BeatService.ACTION_STOP);
+        assertShortcut(R.string.shortcut_pause);
         openShortcut(BeatService.ACTION_STOP);
         await(() -> !BeatService.isActive);
-        assertShortcuts(BeatService.ACTION_START);
+        assertShortcut(R.string.shortcut_start);
+    }
+
+    @Test public void cachedShortcutKeepsItsIdentityAndRemainsUsable() {
+        // Honor may keep the same menu item and intent after the first click.
+        openCachedShortcut();
+        await(() -> BeatService.isRunning);
+        assertShortcut(R.string.shortcut_pause);
+        openCachedShortcut();
+        await(() -> BeatService.isActive && !BeatService.isRunning);
+        assertShortcut(R.string.shortcut_resume);
+        openCachedShortcut();
+        await(() -> BeatService.isRunning);
+        assertShortcut(R.string.shortcut_pause);
+        screen.recreate();
+        assertTrue(BeatService.isRunning);
+        openCachedShortcut();
+        await(() -> BeatService.isActive && !BeatService.isRunning);
+        assertShortcut(R.string.shortcut_resume);
     }
 
     @Test public void staleAndRepeatedIntentsNeverToggleOrRestartSession() {
@@ -109,18 +129,23 @@ public class LauncherShortcutsTest {
         screen.recreate();
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
         assertFalse(BeatService.isActive);
-        assertShortcuts(BeatService.ACTION_START);
+        assertShortcut(R.string.shortcut_start);
     }
 
     @Test public void coldShortcutLaunchAndServiceDestructionRestoreStart() {
         screen.close();
         screen = ActivityScenario.launch(new Intent(context, MainActivity.class)
-                .setAction(BeatService.ACTION_START));
+                .setAction(LauncherShortcuts.ACTION_TOGGLE));
         await(() -> BeatService.isRunning);
-        assertShortcuts(BeatService.ACTION_PAUSE, BeatService.ACTION_STOP);
+        assertShortcut(R.string.shortcut_pause);
         context.stopService(new Intent(context, BeatService.class));
         await(() -> !BeatService.isActive);
-        assertShortcuts(BeatService.ACTION_START);
+        assertShortcut(R.string.shortcut_start);
+    }
+
+    private void openCachedShortcut() {
+        context.startActivity(new Intent(cachedShortcut));
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
     private void openShortcut(String action) {
@@ -130,22 +155,16 @@ public class LauncherShortcutsTest {
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
-    private void assertShortcuts(String... actions) {
+    private void assertShortcut(int label) {
         await(() -> {
             List<ShortcutInfo> published = shortcuts.getDynamicShortcuts();
-            if (published.size() != actions.length) return false;
-            for (int i = 0; i < actions.length; i++) {
-                ShortcutInfo match = null;
-                for (ShortcutInfo item : published) {
-                    if (actions[i].equals(item.getId())) match = item;
-                }
-                if (match == null || !match.isEnabled() || match.getRank() != i
-                        || !actions[i].equals(match.getIntent().getAction())
-                        || !MainActivity.class.getName().equals(match.getIntent().getComponent().getClassName())) {
-                    return false;
-                }
-            }
-            return true;
+            // There is only one entry, including while running: no finish shortcut.
+            if (published.size() != 1) return false;
+            ShortcutInfo item = published.get(0);
+            return LauncherShortcuts.SHORTCUT_ID.equals(item.getId()) && item.isEnabled()
+                    && item.getRank() == 0 && context.getString(label).contentEquals(item.getShortLabel())
+                    && LauncherShortcuts.ACTION_TOGGLE.equals(item.getIntent().getAction())
+                    && MainActivity.class.getName().equals(item.getIntent().getComponent().getClassName());
         });
     }
 

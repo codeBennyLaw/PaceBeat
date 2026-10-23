@@ -3,6 +3,4 @@
     <string name="shortcut_start">开始跑</string>
     <string name="shortcut_pause">暂停</string>
     <string name="shortcut_resume">继续</string>
-    <string name="shortcut_stop">结束</string>
-    <string name="shortcut_unavailable">当前跑步状态不支持此操作，请打开 PaceBeat。</string>
 </resources>

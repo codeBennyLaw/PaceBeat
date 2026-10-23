@@ -1,8 +1,10 @@
+import com.android.build.api.variant.impl.VariantOutputImpl
+
 plugins {
     id("com.android.application")
 }
 
-val releaseVersionName = "1.1.0"
+val releaseVersionName = "1.1.1"
 
 android {
     namespace = "com.pacebeat.app"
@@ -14,7 +16,7 @@ android {
         applicationId = "com.pacebeat.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 110
+        versionCode = 111
         versionName = releaseVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -35,26 +37,14 @@ android {
     }
 }
 
-tasks.configureEach {
-    val apkBuildType = when (name) {
-        "assembleDebug" -> "debug"
-        "assembleRelease" -> "release"
-        else -> return@configureEach
-    }
-    doLast {
-        val outputDirectory = layout.buildDirectory.dir("outputs/apk/$apkBuildType").get().asFile
-        val unsignedDefault = outputDirectory.resolve("app-$apkBuildType-unsigned.apk")
-        val signedDefault = outputDirectory.resolve("app-$apkBuildType.apk")
-        val source = when {
-            signedDefault.exists() -> signedDefault
-            unsignedDefault.exists() -> unsignedDefault
-            else -> null
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            // AGP 9.1 exposes the file-name property on its output implementation.
+            (output as VariantOutputImpl).outputFileName.set(
+                "${rootProject.name}-${variant.name}-v-${releaseVersionName.replace('.', '-')}.apk"
+            )
         }
-        check(source != null) { "$apkBuildType APK was not produced" }
-        val versioned = outputDirectory.resolve(
-            "${rootProject.name}-$apkBuildType-v-${releaseVersionName.replace('.', '-')}.apk"
-        )
-        source.copyTo(versioned, overwrite = true)
     }
 }
 
