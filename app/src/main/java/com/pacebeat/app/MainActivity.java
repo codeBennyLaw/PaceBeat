@@ -63,6 +63,8 @@ public class MainActivity extends Activity {
     private SeekBar seekBar;
     private RhythmView rhythmView;
     private int displayedState = -1;
+    private String pendingShortcutAction;
+    private boolean startingSession;
 
     private final Runnable updateClock = new Runnable() {
         @Override public void run() {
@@ -112,12 +114,40 @@ public class MainActivity extends Activity {
         vibrate = getPreferences(MODE_PRIVATE).getBoolean("vibrate", false);
         rhythmMode = Cadence.normalizeRhythm(getPreferences(MODE_PRIVATE).getInt("rhythm_mode", Cadence.MODE_STEADY));
         buildScreen();
+        pendingShortcutAction = savedInstanceState == null
+                ? getIntent().getAction() : savedInstanceState.getString("pending_shortcut");
+        startingSession = savedInstanceState != null && savedInstanceState.getBoolean("starting_session");
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        pendingShortcutAction = intent.getAction();
+    }
+
+    @Override protected void onSaveInstanceState(Bundle outState) {
+        outState.putString("pending_shortcut", pendingShortcutAction);
+        outState.putBoolean("starting_session", startingSession);
+        super.onSaveInstanceState(outState);
     }
 
     @Override protected void onResume() {
         super.onResume();
+        LauncherShortcuts.sync(this);
+        handleShortcutAction();
         handler.removeCallbacks(updateClock);
         handler.post(updateClock);
+    }
+
+    private void handleShortcutAction() {
+        String action = pendingShortcutAction;
+        pendingShortcutAction = null;
+        if (BeatService.ACTION_START.equals(action)) {
+            requestStartSession();
+        } else if (BeatService.isActive && (BeatService.ACTION_PAUSE.equals(action)
+                || BeatService.ACTION_RESUME.equals(action) || BeatService.ACTION_STOP.equals(action))) {
+            // Keep actions explicit: a stale pause shortcut must never resume or start a run.
+            startService(new Intent(this, BeatService.class).setAction(action));
+        }
     }
 
     @Override protected void onPause() {
@@ -357,6 +387,12 @@ public class MainActivity extends Activity {
             handler.postDelayed(updateClock, 120);
             return;
         }
+        requestStartSession();
+    }
+
+    private void requestStartSession() {
+        if (BeatService.isActive || startingSession) return;
+        startingSession = true;
         if (Build.VERSION.SDK_INT >= 33 &&
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[] {Manifest.permission.POST_NOTIFICATIONS}, 1);
@@ -399,6 +435,8 @@ public class MainActivity extends Activity {
     }
 
     private void startSession() {
+        startingSession = false;
+        if (BeatService.isActive) return;
         Intent intent = settingsIntent(BeatService.ACTION_START);
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent);
         else startService(intent);

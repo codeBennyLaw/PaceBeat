@@ -178,6 +178,7 @@ public class BeatService extends Service {
             beginTracking();
             startAudio();
             mainHandler.postDelayed(refreshNotification, 5000);
+            LauncherShortcuts.sync(this);
         } else if (ACTION_UPDATE.equals(action) && active) {
             if (!notificationDismissed) ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTIFICATION_ID, notification());
         } else if (active) {
@@ -256,6 +257,7 @@ public class BeatService extends Service {
         endTracking();
         stopAudio();
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTIFICATION_ID, notification());
+        LauncherShortcuts.sync(this);
     }
 
     private void resumeSession() {
@@ -264,6 +266,7 @@ public class BeatService extends Service {
         beginTracking();
         startAudio();
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(NOTIFICATION_ID, notification());
+        LauncherShortcuts.sync(this);
     }
 
     private void stopSession() {
@@ -276,6 +279,7 @@ public class BeatService extends Service {
         active = false;
         isActive = false;
         isRunning = false;
+        LauncherShortcuts.sync(this);
         mainHandler.removeCallbacks(refreshNotification);
         endTracking();
         stopAudio();
@@ -382,6 +386,7 @@ public class BeatService extends Service {
         active = false;
         isActive = false;
         isRunning = false;
+        LauncherShortcuts.sync(this);
         endTracking();
         stopAudio();
         stopForeground(STOP_FOREGROUND_REMOVE);
